@@ -1,68 +1,112 @@
 const express = require('express');
 const app = express();
-const port = 8000;
+const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
+const Book = require('./models/book.model');
+const User = require('./models/user.model');
+
+mongoose.connect(process.env.MONGO_URI);
 
 app.use(express.json());
 
-app.get('/', (req, res) => {
-    res.json({ message: 'Hello World' });
+async function authMiddleware(req, res, next) {
+    try {
+        const decoded = jwt.verify(req.headers.authorization.split(' ')[1], process.env.JWT_SECRET);
+        req.user = decoded;
+    next();
+    } catch (e) {
+        res.status(401).json({ message: e.message });
+    }
+}
+
+app.post('/register', async (req, res) => {
+    try {
+        const passwordHash = await bcrypt.hash(req.body.password, 10);
+        await User.create({
+            username: req.body.username,
+            password: passwordHash
+        });
+        res.status(201).json({ message: 'User created broo' });
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+});
+
+app.post('/login', async (req, res) => {
+    try {
+        const user = await User.findOne({ username: req.body.username });
+        const isAuth = await bcrypt.compare(req.body.password, user.password);
+        if (isAuth) {
+            const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+            res.status(200).json({ token });
+        } else {
+            res.status(401).json({ message: "Username or Password is incorrect broo" });
+        }
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+})
+
+
+app.get('/', authMiddleware, async (req, res) => {
+    const { id } = req.user;
+    const user = await User.findById(id);
+    res.json({ message: `Hello ${user.username}` });
+});
+
+
+app.get('/check/:xyz', (req, res) => {
+    res.send(req.params.xyz);
 });
 
 // CRUD
 
-// BAD PRACTICE - DONT DO IT IN REAL LIFE
-let books = [{ id: 1 , name: "Crime and Punishment", author: "Fedor dotosvrski", pages: 100 }, { id: 2 , name: "Letter to Mellisa", author: "Franz Fafka", pages: 100 }];
 
 // READ 
-app.get('/books', (req, res) => {
+app.get('/books', authMiddleware, async (req, res) => {
+    const books = await Book.find();
     res.status(200).json(books);
 });
 
-app.get('/books/:id', (req, res) => {
-    const [ book ] = books.filter(book => book.id == req.params.id);
-    if(book)  {
+app.get('/books/:id', authMiddleware,  async (req, res) => {
+    try {
+        const book = await Book.findById(req.params.id);
         res.status(200).json(book);
-    } else {
-        res.status(200).json({ message: "Soorry bro, book not found" });
+    } catch (e) {
+        res.status(200).json({ message: e.message });
     }
-  
-})
+});
 
 // CREATE
 
-app.post('/books', (req, res) => {
-    books.push(req.body);
+app.post('/books', authMiddleware, async (req, res) => {
+    const book = new Book(req.body);
+    await book.save();
     res.status(201).json({ message: "Bro book is created "});
 });
 
 // UPDATE
 
-app.patch('/books/:id', (req, res) => {
-    const [ book ] = books.filter(book => book.id == req.params.id);
-
-    if(!book) {
-        res.status(200).json({ message: "Soorry bro, book not found" });
+app.patch('/books/:id', authMiddleware, async (req, res) => {
+    try {
+        const book = await Book.findByIdAndUpdate(req.params.id, req.body, { new: true} );
+        res.status(200).json(book); 
+    } catch (e)  {
+        res.status(500).json({ message: e.message });
     }
-
-    book.name = req.body.name;
-    book.author = req.body.author;
-    book.pages = req.body.pages;
-
-    res.status(200).json(book);
 });
 
 // DELETE 
 
-app.delete('/books/:id', (req, res) => {
-    const [ book ] = books.filter(book => book.id == req.params.id);
-
-    if(!book) {
-        res.status(200).json({ message: "Soorry bro, book not found" });
+app.delete('/books/:id', authMiddleware, async (req, res) => {
+    try {
+        await Book.findByIdAndDelete(req.params.id);
+        res.status(200).json({ message: "Books deleted succesfully bro" });
+    } catch (e) {
+        res.status(500).json({ message: e.message });
     }
-
-    books = books.filter(book => book.id != req.params.id);
-    console.log(books);
-    res.status(200).json({ message: "Books deleted succesfully bro" });
 });
 
-app.listen(port, () => console.log(`${port} is running`));
+app.listen(process.env.PORT, () => console.log(`${process.env.PORT} is running`));
